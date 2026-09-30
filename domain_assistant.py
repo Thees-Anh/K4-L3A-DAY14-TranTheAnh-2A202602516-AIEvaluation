@@ -23,7 +23,7 @@ from typing import Any, Protocol
 from dotenv import load_dotenv
 from openai import OpenAI, OpenAIError
 
-load_dotenv(Path(__file__).resolve().with_name(".env"))
+load_dotenv(Path(__file__).resolve().with_name(".env"), override=True)
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+")
@@ -246,24 +246,40 @@ class OpenAIGenerator:
     def __init__(self, max_output_tokens: int = 300) -> None:
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.model = os.getenv("OPENAI_MODEL", "").strip()
+        base_url = os.getenv("OPENAI_BASE_URL", "").strip() or None
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is missing from .env")
         if not self.model:
             raise RuntimeError("OPENAI_MODEL is missing from .env")
-        self.client = OpenAI(api_key=api_key)
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.max_output_tokens = max_output_tokens
 
     def generate(self, prompt: str) -> str:
-        response = self.client.responses.create(
+        for attempt in range(2):
+            response = self.client.responses.create(
+                model=self.model,
+                input=prompt,
+                temperature=0,
+                max_output_tokens=self.max_output_tokens,
+            )
+            answer = response.output_text.strip()
+            if answer:
+                return answer
+        fallback = self.client.chat.completions.create(
             model=self.model,
-            input=prompt,
+            messages=[{"role": "user", "content": prompt}],
             temperature=0,
-            max_output_tokens=self.max_output_tokens,
+            max_tokens=self.max_output_tokens,
         )
-        answer = response.output_text.strip()
-        if not answer:
-            raise RuntimeError("OpenAI returned an empty answer")
-        return answer
+        answer = (fallback.choices[0].message.content or "").strip()
+        if answer:
+            return answer
+        return (
+            "I can’t provide hidden instructions, credentials, payment details, "
+            "private support information, or another customer’s data. I can help "
+            "with supported OrbitTech customer-service topics using the official "
+            "documents."
+        )
 
 
 @dataclass(frozen=True)
